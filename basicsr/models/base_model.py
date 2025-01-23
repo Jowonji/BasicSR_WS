@@ -49,28 +49,41 @@ class BaseModel():
 
     def _initialize_best_metric_results(self, dataset_name):
         """Initialize the best metric results dict for recording the best metric value and iteration."""
+        # `best_metric_results`에 해당 데이터셋 이름이 존재하는지 확인
         if hasattr(self, 'best_metric_results') and dataset_name in self.best_metric_results:
-            return
+            return # 이미 존재하면 초기화하지 않음
         elif not hasattr(self, 'best_metric_results'):
-            self.best_metric_results = dict()
+            self.best_metric_results = dict() # 기록이 없으면 새로 생성
 
-        # add a dataset record
+        # 해당 데이터셋의 메트릭 기록을 생성
         record = dict()
-        for metric, content in self.opt['val']['metrics'].items():
-            better = content.get('better', 'higher')
+        for metric, content in self.opt['val']['metrics'].items(): # 각 메트릭에 대해
+            # 기본적으로 'higher'를 설정하되, 특정 메트릭에 대해 'lower'로 설정
+            better = content.get('better', 'higher') # 설정값 가져오기, 없으면 기본값 'higher'
+            if metric == 'rmse':  # `rmse`는 값이 낮을수록 좋은 메트릭으로 간주
+                better = 'lower'
+
+            # 'higher'일 경우 -inf로 초기화, 'lower'일 경우 inf로 초기화
             init_val = float('-inf') if better == 'higher' else float('inf')
+            # 각 메트릭에 대한 초기 기록 생성
             record[metric] = dict(better=better, val=init_val, iter=-1)
+
+        # 데이터셋 이름을 키로, 메트릭 기록 저장
         self.best_metric_results[dataset_name] = record
 
     def _update_best_metric_result(self, dataset_name, metric, val, current_iter):
+        # 'higher'를 사용하는 경우: 값이 클수록 좋음
         if self.best_metric_results[dataset_name][metric]['better'] == 'higher':
+            # 현재 값(val)이 기존 값보다 크거나 같으면 갱신
             if val >= self.best_metric_results[dataset_name][metric]['val']:
-                self.best_metric_results[dataset_name][metric]['val'] = val
-                self.best_metric_results[dataset_name][metric]['iter'] = current_iter
+                self.best_metric_results[dataset_name][metric]['val'] = val # 새로운 최고 값 저장
+                self.best_metric_results[dataset_name][metric]['iter'] = current_iter # 해당 반복 수 저장
         else:
+            # 'lower'를 사용하는 경우: 값이 작을수록 좋음
+            # 현재 값(val)이 기존 값보다 작거나 같으면 갱신
             if val <= self.best_metric_results[dataset_name][metric]['val']:
-                self.best_metric_results[dataset_name][metric]['val'] = val
-                self.best_metric_results[dataset_name][metric]['iter'] = current_iter
+                self.best_metric_results[dataset_name][metric]['val'] = val # 새로운 최저 값 저장
+                self.best_metric_results[dataset_name][metric]['iter'] = current_iter # 해당 반복 수 저장
 
     def model_ema(self, decay=0.999):
         net_g = self.get_bare_model(self.net_g)

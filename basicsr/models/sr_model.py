@@ -9,6 +9,9 @@ from basicsr.metrics import calculate_metric
 from basicsr.utils import get_root_logger, imwrite, tensor2img
 from basicsr.utils.registry import MODEL_REGISTRY
 from .base_model import BaseModel
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import numpy as np
 
 
 @MODEL_REGISTRY.register()
@@ -182,70 +185,143 @@ class SRModel(BaseModel):
             self.nondist_validation(dataloader, current_iter, tb_logger, save_img)
 
     def nondist_validation(self, dataloader, current_iter, tb_logger, save_img):
+        # 데이터셋 이름 가져오기
         dataset_name = dataloader.dataset.opt['name']
+
+        # HR 데이터 범위 가져오기
+        hr_min = dataloader.dataset.hr_min  # 데이터셋에서 hr_min 값 가져오기
+        hr_max = dataloader.dataset.hr_max  # 데이터셋에서 hr_max 값 가져오기
+
+        # 검증에서 사용할 메트릭(metric)이 정의되어 있는지 확인
         with_metrics = self.opt['val'].get('metrics') is not None
+
+        # 진행 상태 표시 여부 확인 (progress bar)
         use_pbar = self.opt['val'].get('pbar', False)
 
+        # 메트릭 결과 초기화
         if with_metrics:
-            if not hasattr(self, 'metric_results'):  # only execute in the first run
+            if not hasattr(self, 'metric_results'): # 최초 실행시
+                # 메트릭 이름을 키로 하는 딕셔너리 생성
                 self.metric_results = {metric: 0 for metric in self.opt['val']['metrics'].keys()}
-            # initialize the best metric results for each dataset_name (supporting multiple validation datasets)
+            # 여러 데이터셋에 대해 최고 메트릭 결과 초기화
             self._initialize_best_metric_results(dataset_name)
-        # zero self.metric_results
+
         if with_metrics:
             self.metric_results = {metric: 0 for metric in self.metric_results}
-
+        
+        # 메트릭 계산에 사용할 데이터를 저장하는 딕셔너리
         metric_data = dict()
+
+        # Progress bar 설정 (옵션에서 활성화한 경우)
         if use_pbar:
             pbar = tqdm(total=len(dataloader), unit='image')
 
+        # 데이터 로더 반복문 (이미지 처리)
         for idx, val_data in enumerate(dataloader):
+            # 현재 이미지 이름 가져오기
             img_name = osp.splitext(osp.basename(val_data['lq_path'][0]))[0]
+
+            # 데이터를 모델에 입력
             self.feed_data(val_data)
-            self.test()
+            self.test() # 테스트 실행
 
+            # 모델 출력 가져오기
             visuals = self.get_current_visuals()
-            sr_img = tensor2img([visuals['result']])
-            metric_data['img'] = sr_img
-            if 'gt' in visuals:
-                gt_img = tensor2img([visuals['gt']])
-                metric_data['img2'] = gt_img
-                del self.gt
 
-            # tentative for out of GPU memory
+            # **모델 출력 범위 확인**
+            sr_tensor = visuals['result']  # 모델 출력 텐서
+            print(f"Raw SR Tensor Range: min={sr_tensor.min().item()}, max={sr_tensor.max().item()}")
+
+            # SR 이미지를 numpy 배열로 변환
+            sr_img = tensor2img([visuals['result']]) # 모델 결과 반환
+            metric_data['img'] = sr_img # 메트릭 계산용 데이터에 추가
+            
+            # GT 이미지 처리
+            if 'gt' in visuals: # Ground Truth가 존재하면
+                gt_img = tensor2img([visuals['gt']]) # GT 반환
+                metric_data['img2'] = gt_img # 메트릭 계산용 데이터에 추가
+                del self.gt # 메모리 절약을 위해 제거
+
+            # **GT와 SR 데이터의 범위 확인**
+            if 'gt' in visuals:
+                print(f"GT Image Range: min={gt_img.min()}, max={gt_img.max()}")
+
+            # GPU 메모리 관리
             del self.lq
             del self.output
             torch.cuda.empty_cache()
 
+            # 결과 이미지 저장
             if save_img:
+                # 결과 이미지 저장
+                if sr_img.ndim == 2:  # 예: (H, W)
+                    # 1. SR 이미지 값의 범위 출력 (디버깅용)
+                    print(f"SR Image Range: min={sr_img.min()}, max={sr_img.max()}")
+
+                    # 2. GT 값 (HR 데이터의 범위)을 기준으로 역정규화
+                    sr_img_rescaled = sr_img * (hr_max - hr_min) + hr_min  # Rescale to original GT range
+                    print(f"Rescaled SR Image Range: min={sr_img_rescaled.min()}, max={sr_img_rescaled.max()}")
+
+                    # 3. 이미지 시각화를 위해 정규화 (0-1 범위로 변환)
+                    epsilon = 1e-8  # 작은 값 추가로 안정성 보장
+                    sr_img_normalized = (sr_img_rescaled - sr_img_rescaled.min()) / (
+                        max(sr_img_rescaled.max() - sr_img_rescaled.min(), epsilon)
+                    )
+                    print(f"Normalized SR Image Range: min={sr_img_normalized.min()}, max={sr_img_normalized.max()}")
+
+                    # 4. viridis 컬러맵 적용
+                    sr_img_colormap = cm.viridis(sr_img_normalized)  # Apply viridis colormap
+                    sr_img_colormap = (sr_img_colormap[:, :, :3] * 255).astype(np.uint8)  # Convert to [0, 255]
+                else:
+                    raise ValueError("Expected a single-channel image for colormap, but got shape: {}".format(sr_img.shape))
+
+                # 학습 중일 경우 저장 경로
                 if self.opt['is_train']:
                     save_img_path = osp.join(self.opt['path']['visualization'], img_name,
                                              f'{img_name}_{current_iter}.png')
                 else:
+                    # 검증 중일 경우 저장 경로
                     if self.opt['val']['suffix']:
-                        save_img_path = osp.join(self.opt['path']['visualization'], dataset_name,
-                                                 f'{img_name}_{self.opt["val"]["suffix"]}.png')
+                        save_img_path = osp.join(
+                            self.opt['path']['visualization'], 
+                            dataset_name,
+                            f'{img_name}_{self.opt["val"]["suffix"]}.png'
+                        )
                     else:
-                        save_img_path = osp.join(self.opt['path']['visualization'], dataset_name,
-                                                 f'{img_name}_{self.opt["name"]}.png')
-                imwrite(sr_img, save_img_path)
+                        save_img_path = osp.join(
+                            self.opt['path']['visualization'], 
+                            dataset_name,
+                            f'{img_name}_{self.opt["name"]}.png'
+                        )
 
+                # 컬러맵 적용한 이미지를 저장
+                imwrite(sr_img_colormap, save_img_path)
+
+                # 저장된 이미지를 확인
+            print(f"Saved Image: {save_img_path}, Shape: {sr_img_colormap.shape}")
+
+            # 메트릭 계산
             if with_metrics:
-                # calculate metrics
                 for name, opt_ in self.opt['val']['metrics'].items():
                     self.metric_results[name] += calculate_metric(metric_data, opt_)
+
+            # progress bar 업데이트
             if use_pbar:
                 pbar.update(1)
                 pbar.set_description(f'Test {img_name}')
+        
+        # progress bar 닫기
         if use_pbar:
             pbar.close()
 
+        # 최종 메트릭 계산 및 로그 출력
         if with_metrics:
             for metric in self.metric_results.keys():
+                # 메트릭 평균 계산
                 self.metric_results[metric] /= (idx + 1)
-                # update the best metric result
+                # 최고 메트릭 결과 업데이트
                 self._update_best_metric_result(dataset_name, metric, self.metric_results[metric], current_iter)
-
+            # 검증 메트릭 결과를 로그에 기록
             self._log_validation_metric_values(current_iter, dataset_name, tb_logger)
 
     def _log_validation_metric_values(self, current_iter, dataset_name, tb_logger):

@@ -205,6 +205,12 @@ class PerceptualLoss(nn.Module):
         Returns:
             Tensor: Forward results.
         """
+        # 1채널 -> 3채널 변환
+        if x.size(1) == 1:  # 입력이 1채널인 경우
+            x = x.repeat(1, 3, 1, 1)
+        if gt.size(1) == 1:  # Ground Truth가 1채널인 경우
+            gt = gt.repeat(1, 3, 1, 1)
+
         # extract vgg features
         x_features = self.vgg(x)
         gt_features = self.vgg(gt.detach())

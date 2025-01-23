@@ -7,6 +7,47 @@ from basicsr.metrics.metric_util import reorder_image, to_y_channel
 from basicsr.utils.color_util import rgb2ycbcr_pt
 from basicsr.utils.registry import METRIC_REGISTRY
 
+@METRIC_REGISTRY.register()
+def calculate_rmse(img, img2, crop_border, input_order='HWC', **kwargs):
+    """Calculate RMSE (Root Mean Squared Error) for 1-channel images.
+
+    Args:
+        img (ndarray): Images with range [0, 255], shape (H, W) or (C, H, W) depending on `input_order`.
+        img2 (ndarray): Images with range [0, 255], shape (H, W) or (C, H, W) depending on `input_order`.
+        crop_border (int): Cropped pixels in each edge of an image. These pixels are not involved in the calculation.
+        input_order (str): Whether the input order is 'HWC' or 'CHW'. Default: 'HWC'.
+
+    Returns:
+        float: RMSE result.
+    """
+
+    assert img.shape == img2.shape, f'Image shapes are different: {img.shape}, {img2.shape}.'
+    if input_order not in ['HWC', 'CHW']:
+        raise ValueError(f'Wrong input_order {input_order}. Supported input_orders are "HWC" and "CHW".')
+
+    # Reorder image to HWC for consistency
+    img = reorder_image(img, input_order=input_order)
+    img2 = reorder_image(img2, input_order=input_order)
+
+    # If image is (H, W), add a channel dimension for consistency
+    if img.ndim == 2:
+        img = np.expand_dims(img, axis=-1)
+        img2 = np.expand_dims(img2, axis=-1)
+
+    # Crop border if specified
+    if crop_border != 0:
+        img = img[crop_border:-crop_border, crop_border:-crop_border, :]
+        img2 = img2[crop_border:-crop_border, crop_border:-crop_border, :]
+
+    # Convert to float64 for precise calculations
+    img = img.astype(np.float64)
+    img2 = img2.astype(np.float64)
+
+    # Calculate RMSE
+    mse = np.mean((img - img2)**2)
+    rmse = np.sqrt(mse)
+    return rmse
+
 
 @METRIC_REGISTRY.register()
 def calculate_psnr(img, img2, crop_border, input_order='HWC', test_y_channel=False, **kwargs):
