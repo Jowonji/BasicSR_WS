@@ -7,47 +7,63 @@ from basicsr.metrics.metric_util import reorder_image, to_y_channel
 from basicsr.utils.color_util import rgb2ycbcr_pt
 from basicsr.utils.registry import METRIC_REGISTRY
 
+import numpy as np
+
+import numpy as np
+
 @METRIC_REGISTRY.register()
-def calculate_rmse(img, img2, crop_border, input_order='HWC', **kwargs):
+def calculate_rmse(img, img2, crop_border=0, input_order='HWC', **kwargs):
     """Calculate RMSE (Root Mean Squared Error) for 1-channel images.
 
     Args:
-        img (ndarray): Images with range [0, 255], shape (H, W) or (C, H, W) depending on `input_order`.
-        img2 (ndarray): Images with range [0, 255], shape (H, W) or (C, H, W) depending on `input_order`.
-        crop_border (int): Cropped pixels in each edge of an image. These pixels are not involved in the calculation.
-        input_order (str): Whether the input order is 'HWC' or 'CHW'. Default: 'HWC'.
+        img (ndarray): Images with range [0, 255], shape (H, W) or (C, H, W).
+        img2 (ndarray): Ground Truth image with same shape as `img`.
+        crop_border (int): Number of pixels to crop from each border.
+        input_order (str): Image order ('HWC' or 'CHW').
 
     Returns:
         float: RMSE result.
     """
 
-    assert img.shape == img2.shape, f'Image shapes are different: {img.shape}, {img2.shape}.'
-    if input_order not in ['HWC', 'CHW']:
-        raise ValueError(f'Wrong input_order {input_order}. Supported input_orders are "HWC" and "CHW".')
+    # 1️⃣ 배치 차원 제거 (B, C, H, W 또는 B, H, W 인 경우)
+    if img.ndim == 4:
+        img = img.squeeze(0)  # 배치 차원 제거
+        img2 = img2.squeeze(0)
 
-    # Reorder image to HWC for consistency
+    if img.ndim == 3 and img.shape[0] == 1:
+        img = img.squeeze(0)  # (1, H, W) → (H, W)
+        img2 = img2.squeeze(0)
+
+    if img.shape != img2.shape:
+        raise ValueError(f"Image shapes are different: {img.shape}, {img2.shape}.")
+
+    if input_order not in ['HWC', 'CHW']:
+        raise ValueError(f"Invalid input_order {input_order}. Use 'HWC' or 'CHW'.")
+
+    # 2️⃣ 이미지를 HWC 형식으로 변환
     img = reorder_image(img, input_order=input_order)
     img2 = reorder_image(img2, input_order=input_order)
 
-    # If image is (H, W), add a channel dimension for consistency
-    if img.ndim == 2:
-        img = np.expand_dims(img, axis=-1)
-        img2 = np.expand_dims(img2, axis=-1)
+    # 3️⃣ 이미지 크기 확인 및 `crop_border` 적용 가능 여부 체크
+    h, w = img.shape[:2]
+    if crop_border * 2 >= h or crop_border * 2 >= w:
+        print(f"⚠️ Warning: crop_border={crop_border} is too large for image size {img.shape}. Setting crop_border=0.")
+        crop_border = 0  # 강제로 0으로 설정
 
-    # Crop border if specified
-    if crop_border != 0:
-        img = img[crop_border:-crop_border, crop_border:-crop_border, :]
-        img2 = img2[crop_border:-crop_border, crop_border:-crop_border, :]
+    # 4️⃣ crop_border 적용
+    if crop_border > 0:
+        img = img[crop_border:-crop_border, crop_border:-crop_border]
+        img2 = img2[crop_border:-crop_border, crop_border:-crop_border]
 
-    # Convert to float64 for precise calculations
+    # 5️⃣ float64로 변환하여 정확한 RMSE 계산
     img = img.astype(np.float64)
     img2 = img2.astype(np.float64)
 
-    # Calculate RMSE
-    mse = np.mean((img - img2)**2)
+    # 6️⃣ RMSE 계산
+    mse = np.mean((img - img2) ** 2)
     rmse = np.sqrt(mse)
-    return rmse
 
+    return rmse
 
 @METRIC_REGISTRY.register()
 def calculate_psnr(img, img2, crop_border, input_order='HWC', test_y_channel=False, **kwargs):
