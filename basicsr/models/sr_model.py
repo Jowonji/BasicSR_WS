@@ -109,7 +109,7 @@ class SRModel(BaseModel):
 
         l_total = 0
         loss_dict = OrderedDict()
-        
+
         # 픽셀 손실 계산
         if self.cri_pix:
             l_pix = self.cri_pix(self.output, self.gt)
@@ -213,7 +213,7 @@ class SRModel(BaseModel):
         with_metrics = self.opt['val'].get('metrics') is not None
 
         # 진행 상태 표시 여부 확인 (progress bar)
-        use_pbar = self.opt['val'].get('pbar', False)
+        use_pbar = self.opt['val'].get('pbar', True)
 
         # 메트릭 결과 초기화
         if with_metrics:
@@ -247,7 +247,7 @@ class SRModel(BaseModel):
 
             # 2. 모든 불필요한 차원 제거 (강제 squeeze 적용)
             sr_tensor = visuals['result'].cpu().detach().numpy()
-            gt_tensor - visuals['gt'].cpu().detach().numpy()
+            gt_tensor = visuals['gt'].cpu().detach().numpy()
 
             # 3. 차원 체크 (H, W 형태가 아닐 경우 강제 변환)
             if sr_tensor.ndim != 2:
@@ -268,15 +268,14 @@ class SRModel(BaseModel):
                 raise ValueError(f"NaN detected in SR or GT image for {img_name}. Check normalization or model output.")
             if np.isinf(sr_img_rescaled).any() or np.isinf(gt_img_rescaled).any():
                 raise ValueError(f"Infinite values detected in SR or GT image for {img_name}. Check model stability.")
-            
+
             # RMSE 계산 전에 크기 확인
             if sr_img_rescaled.shape != gt_img_rescaled.shape:
                 raise ValueError(f"Shape mismatch: SR {sr_img_rescaled.shape} vs GT {gt_img_rescaled.shape} for {img_name}")
 
-            # 4. RMSE 계산을 위해 [0,255] 정규화 적용
             metric_data = {
-                'img': ((sr_img_rescaled - hr_min) / (hr_max - hr_min) * 255).astype(np.float32),
-                'img2': ((gt_img_rescaled - hr_min) / (hr_max - hr_min) * 255).astype(np.float32)
+                'img': sr_img_rescaled,
+                'img2': gt_img_rescaled
             }
 
             # 5. SR 및 GT 이미지 범위 확인

@@ -9,8 +9,10 @@ from basicsr.utils.options import dict2str, parse_options
 
 
 def test_pipeline(root_path):
-    # parse options, set distributed setting, set ramdom seed
-    opt, _ = parse_options(root_path, is_train=False)
+    # 테스트 파이프라인 실행 함수
+
+    # 설정 파일을 파싱하고, 분산(Distribute) 설정을 적용하며, 랜덤 시드를 설정
+    opt, _ = parse_options(root_path, is_train=False)  #`is_train=False`로 설정하여 테스트 옵션을 가져옴
 
     torch.backends.cudnn.benchmark = True
     # torch.backends.cudnn.deterministic = True
