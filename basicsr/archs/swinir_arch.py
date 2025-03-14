@@ -12,51 +12,82 @@ from .arch_util import to_2tuple, trunc_normal_
 
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):
-    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
-
-    From: https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/layers/drop.py
     """
+    drop_path 함수는 Residual Block 내부에서 경로를 무작위로 드랍(제거)하는 Stochastic Depth 기법을 구현한 것입니다.
+    매 샘플마다 드랍을 적용하여 네트워크의 일반화를 돕습니다.
+
+    매개변수:
+      x         : 입력 텐서
+      drop_prob : 드랍할 확률 (0이면 드랍하지 않음)
+      training  : 학습 모드 여부 (False이면 드랍하지 않고 그대로 반환)
+    """
+    # 드랍 확률이 0이거나 학습 모드가 아니면 입력을 그대로 반환합니다.
     if drop_prob == 0. or not training:
         return x
+    # 남길 확률(keep brobability)
     keep_prob = 1 - drop_prob
-    shape = (x.shape[0], ) + (1, ) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
+    # 입력 텐서와 동일한 배치 차원 유지, 나머지 차원은 1로 만들어 다양한 차원의 텐서를 지원
+    shape = (x.shape[0], ) + (1, ) * (x.ndim - 1)  # 예: (batch_size, 1, 1, ...)
+    # 지정된 shape로 균등분포에서 난수를 생성하고 keep_prob를 더합니다.
     random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-    random_tensor.floor_()  # binarize
+    # 난수 텐서를 floor 연사을 통해 0 또는 1로 이진화
+    random_tensor.floor_()  # binarize: 0또는 1로 만ㄷ름
+    # 입력을 keep_prob로 나누어 평균 값을 유지한 후, 이진 마스크를 곱합니다.
     output = x.div(keep_prob) * random_tensor
     return output
 
 
 class DropPath(nn.Module):
-    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
-
-    From: https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/layers/drop.py
     """
+    DropPath 클래스는 nn.Module을 상속받아 drop_path 함수를 모듈 형태로 감싼 것입니다.
+    Residual Block의 주 경로에서 경로 드랍(Stochastic Depth)을 쉽게 적용할 수 있도록 합니다.
 
+    속성:
+      drop_prob : 드랍할 확률
+    """
     def __init__(self, drop_prob=None):
         super(DropPath, self).__init__()
-        self.drop_prob = drop_prob
+        self.drop_prob = drop_prob # 드랍 확률 저장
 
     def forward(self, x):
+        # forward 함수에서는 drop_path 함수를 호출하여 입력에 대해 경로 드랍을 적용합니다.
         return drop_path(x, self.drop_prob, self.training)
 
 
 class Mlp(nn.Module):
+    """
+    Mlp 클래스는 다층 퍼셉트론(MLP)으로, 일반적으로 Transformer의 feed-forward 네트워크에서 사용됩니다.
+    두 개의 선형 변환 사이에 활성화 함수와 드랍아웃을 적용합니다.
+
+    매개변수:
+      in_features   : 입력 피처의 차원
+      hidden_features: 은닉층 피처 차원 (지정하지 않으면 in_features 사용)
+      out_features  : 출력 피처의 차원 (지정하지 않으면 in_features 사용)
+      act_layer     : 활성화 함수 (기본값: GELU)
+      drop          : 드랍아웃 확률
+    """
 
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
+        # 출력 피처와 은닉 피처 차원을 지정하거나 기본값(in_features)을 사용합니다.
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
+
+        # 첫번째 선형 레이어: 입력을 은닉 차원으로 변환
         self.fc1 = nn.Linear(in_features, hidden_features)
+        # 활성화 함수 초기화 (기본적으로 GELU)
         self.act = act_layer()
+        # 두번째 선형 레이어: 은닉 차원을 출력 차원으로 변환
         self.fc2 = nn.Linear(hidden_features, out_features)
+        # 드랍아웃 레이어 초기화
         self.drop = nn.Dropout(drop)
 
     def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = self.drop(x)
-        x = self.fc2(x)
-        x = self.drop(x)
+        x = self.fc1(x) # 입력 x에 첫 번째 선형 변환 적용
+        x = self.act(x) # 활성화 함수 적용
+        x = self.drop(x) # 드랍아웃 적용
+        x = self.fc2(x) # 두 번째 선형 변환 적용
+        x = self.drop(x) # 다시 드랍아웃 적용
         return x
 
 
@@ -64,13 +95,22 @@ def window_partition(x, window_size):
     """
     Args:
         x: (b, h, w, c)
-        window_size (int): window size
+           - 입력 텐서로, 배치 크기(b), 높이(h), 너비(w), 채널 수(c)를 가집니다.
+        window_size (int): 윈도우의 크기
 
     Returns:
-        windows: (num_windows*b, window_size, window_size, c)
+        windows: (num_windows * b, window_size, window_size, c)
+           - 입력 이미지를 window_size 크기의 작은 윈도우들로 분할한 결과입니다.
+           - 각 윈도우는 개별 이미지 조각이며, 전체 윈도우 수는 (h*w)/(window_size^2)입니다.
     """
+    # 텐서의 배치, 높이, 너비, 채널 수를 추출
     b, h, w, c = x.shape
+    # 이미지를 윈도우 크기별로 나누기 위해 텐서의 형태를 변환합니다.
+    # (b, h, w, c)를 (b, h//window_size, window_size, w//window_size, window_size, c)로 reshape합니다.
     x = x.view(b, h // window_size, window_size, w // window_size, window_size, c)
+    # 차원의 순서를 변경하여 윈도우들이 연속적으로 위치하도록 합니다.
+    # 이후 contiguous()를 사용해 메모리 상에서 연속된 텐서로 만든 후,
+    # (-1, window_size, window_size, c)로 reshape하여 각 윈도우를 하나의 샘플로 취급합니다.
     windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, c)
     return windows
 
@@ -78,115 +118,161 @@ def window_partition(x, window_size):
 def window_reverse(windows, window_size, h, w):
     """
     Args:
-        windows: (num_windows*b, window_size, window_size, c)
-        window_size (int): Window size
-        h (int): Height of image
-        w (int): Width of image
+        windows: (num_windows * b, window_size, window_size, c)
+           - 분할된 윈도우 텐서입니다.
+        window_size (int): 윈도우의 크기
+        h (int): 원본 이미지의 높이
+        w (int): 원본 이미지의 너비
 
     Returns:
         x: (b, h, w, c)
+           - 분할된 윈도우들을 원본 이미지의 형태로 복원한 텐서입니다.
     """
+    # 분할된 윈도우의 총 개수를 이용해 배치 크기 b를 복원합니다.
+    # 원본 이미지의 윈도우 개수는 (h * w) / (window_size^2) 이므로,
+    # windows.shape[0]를 이 값으로 나누어 배치 크기를 구합니다.
     b = int(windows.shape[0] / (h * w / window_size / window_size))
+    # 윈도우 텐서를 (b, h//window_size, w//window_size, window_size, window_size, c) 형태로 reshape합니다.
     x = windows.view(b, h // window_size, w // window_size, window_size, window_size, -1)
+    # 차원의 순서를 변경하여 원본 이미지의 형태인 (b, h, w, c)로 복원합니다.
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(b, h, w, -1)
     return x
 
 
 class WindowAttention(nn.Module):
-    r""" Window based multi-head self attention (W-MSA) module with relative position bias.
-    It supports both of shifted and non-shifted window.
+    r"""
+    윈도우 기반 멀티헤드 셀프 어텐션 (W-MSA) 모듈로, 상대 위치 바이어스(relative position bias)를 포함합니다.
+    Shifted 윈도우와 Non-shifted 윈도우 모두를 지원합니다.
 
     Args:
-        dim (int): Number of input channels.
-        window_size (tuple[int]): The height and width of the window.
-        num_heads (int): Number of attention heads.
-        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
-        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set
-        attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
-        proj_drop (float, optional): Dropout ratio of output. Default: 0.0
+        dim (int): 입력 채널 수.
+        window_size (tuple[int]): 윈도우의 높이와 너비 (예: (Wh, Ww)).
+        num_heads (int): 어텐션 헤드 수.
+        qkv_bias (bool, optional): True이면 query, key, value에 학습 가능한 bias를 추가합니다. (기본값: True)
+        qk_scale (float | None, optional): head_dim ** -0.5의 기본 qk scale을 대체할 값.
+        attn_drop (float, optional): 어텐션 가중치 드랍아웃 비율 (기본값: 0.0)
+        proj_drop (float, optional): 출력 드랍아웃 비율 (기본값: 0.0)
     """
-
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.):
 
         super().__init__()
         self.dim = dim
-        self.window_size = window_size  # Wh, Ww
+        self.window_size = window_size  # 윈도우의 높이(Wh)와 너비(Ww)
         self.num_heads = num_heads
         head_dim = dim // num_heads
-        self.scale = qk_scale or head_dim**-0.5
+        self.scale = qk_scale or head_dim**-0.5 # 스케일 값
 
-        # define a parameter table of relative position bias
+        # 상대 위치 바이어스 테이블 정의: (2*Wh-1) * (2*Ww-1) 크기에 num_heads 차원
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
 
-        # get pair-wise relative position index for each token inside the window
+        # 윈도우 내 각 토큰 쌍의 상대 위치 인덱스를 계산
         coords_h = torch.arange(self.window_size[0])
         coords_w = torch.arange(self.window_size[1])
+        # 2 x Wh x Ww 형태의 좌표 행렬 생성
         coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
         coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+        # 각 토큰 간의 상대 좌표를 계산 (2, Wh*Ww, Wh*Ww)
         relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        # 차원을 변경하여 (Wh*Ww, Wh*Ww, 2) 형태로 만듦
         relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        # 상대 좌표가 음수가 되지 않도록 오프셋 적용 (0부터 시작)
         relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
         relative_coords[:, :, 1] += self.window_size[1] - 1
+        # 첫 번째 좌표에 대한 인덱스 스케일링: (2*Ww-1)를 곱함
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
+        # 두 좌표를 합산하여 최종 상대 위치 인덱스 계산, shape: (Wh*Ww, Wh*Ww)
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        # 모델 버퍼에 등록 (학습 시 업데이트 되지 않는 고정 텐서)
         self.register_buffer('relative_position_index', relative_position_index)
 
+        # Query, Key, Value를 위한 선형 계층. 차원: dim -> 3*dim
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        # 어텐션 드랍아웃
         self.attn_drop = nn.Dropout(attn_drop)
+        # 어텐션 결과를 통합하기 위한 선형 계층
         self.proj = nn.Linear(dim, dim)
-
+        # 최종 출력 드랍아웃
         self.proj_drop = nn.Dropout(proj_drop)
 
+        # 상대 위치 바이어스 테이블을 정규분포(truncated normal)로 초기화
         trunc_normal_(self.relative_position_bias_table, std=.02)
+        # softmax 함수 정의 (어텐션 가중치 계산 시 사용)
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x, mask=None):
         """
         Args:
-            x: input features with shape of (num_windows*b, n, c)
-            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
+            x: 입력 피처, shape: (num_windows * b, n, c)
+               - num_windows: 윈도우 수, b: 배치 크기, n: 각 윈도우 내 토큰 수, c: 채널 수
+            mask: (0 또는 -inf) 마스크, shape: (num_windows, Wh*Ww, Wh*Ww) 또는 None
+
+        Returns:
+            x: 어텐션 연산을 거친 출력 피처, shape: (num_windows * b, n, c)
         """
         b_, n, c = x.shape
+        # qkv 선형 계층 적용 후, (b_, n, 3, num_heads, c // num_heads)로 reshape하고, 차원 순서를 변경
         qkv = self.qkv(x).reshape(b_, n, 3, self.num_heads, c // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = qkv[0], qkv[1], qkv[2]  # query, key, value 분리
 
+        # query에 스케일 적용
         q = q * self.scale
+        # 어텐션 스코어 계산: query와 key의 내적 (행렬 곱셈)
         attn = (q @ k.transpose(-2, -1))
 
+        # 상대 위치 바이어스를 가져오기 위한 처리
+        # relative_position_bias_table에서 flatten된 relative_position_index를 사용해 값을 추출한 후,
+        # 윈도우 크기 (Wh*Ww x Wh*Ww)와 num_heads 차원으로 재구성
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
+        # 차원 순서를 변경하여 (num_heads, Wh*Ww, Wh*Ww)로 만듦
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+        # 어텐션 스코어에 상대 위치 바이어스 추가 (배치 차원 추가)
         attn = attn + relative_position_bias.unsqueeze(0)
 
+        # 만약 마스크가 주어졌다면, 윈도우 별 마스크를 어텐션 스코어에 적용
         if mask is not None:
-            nw = mask.shape[0]
+            nw = mask.shape[0] # 윈도우 수
+            # 마스크를 적용하기 위해 어텐션 스코어의 shape을 재구성하고, 마스크를 더한 후 다시 reshape
             attn = attn.view(b_ // nw, nw, self.num_heads, n, n) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, n, n)
             attn = self.softmax(attn)
         else:
+            # 마스크가 없으면 바로 softmax 적용
             attn = self.softmax(attn)
 
+        # 어텐션 가중치에 드랍아웃 적용
         attn = self.attn_drop(attn)
 
+        # 어텐션 가중치와 value를 곱하여 출력 계산, 차원 변환 후 reshape
         x = (attn @ v).transpose(1, 2).reshape(b_, n, c)
+        # 최종 선형 계층을 통해 출력 차원 통합 후 드랍아웃 적용
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
 
     def extra_repr(self) -> str:
+        # 객체의 추가 정보를 문자열로 반환합니다.
+        # 모델의 기본 속성(dim, window_size, num_heads)을 요약하여 출력할 때 사용됩니다.
         return f'dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}'
 
     def flops(self, n):
-        # calculate flops for 1 window with token length of n
+        # 주어진 토큰 길이 n에 대해, 한 개의 윈도우에서 발생하는 FLOPs (부동소수점 연산 수)를 계산합니다.
         flops = 0
-        # qkv = self.qkv(x)
+        # qkv 연산: 입력 텐서 x에 대해 선형 변환을 수행하여 query, key, value를 계산합니다.
+        # 연산량: n * self.dim (입력 차원) * 3 * self.dim (출력 차원 3배)
         flops += n * self.dim * 3 * self.dim
-        # attn = (q @ k.transpose(-2, -1))
+
+        # 어텐션 스코어 계산: query와 key의 전치 행렬 간의 행렬 곱셈
+        # 각 헤드별 연산량: n (query 길이) * (self.dim // self.num_heads) (헤드 차원) * n (key 길이)
         flops += self.num_heads * n * (self.dim // self.num_heads) * n
-        #  x = (attn @ v)
+
+        # 어텐션 결과 계산: 어텐션 가중치와 value의 행렬 곱셈
+        # 각 헤드별 연산량: n * n * (self.dim // self.num_heads)
         flops += self.num_heads * n * n * (self.dim // self.num_heads)
-        # x = self.proj(x)
+
+        # 최종 프로젝션: 어텐션 결과에 대해 선형 변환 수행
+        # 연산량: n * self.dim * self.dim
         flops += n * self.dim * self.dim
         return flops
 
@@ -195,21 +281,20 @@ class SwinTransformerBlock(nn.Module):
     r""" Swin Transformer Block.
 
     Args:
-        dim (int): Number of input channels.
-        input_resolution (tuple[int]): Input resolution.
-        num_heads (int): Number of attention heads.
-        window_size (int): Window size.
-        shift_size (int): Shift size for SW-MSA.
-        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
-        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
-        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.
-        drop (float, optional): Dropout rate. Default: 0.0
-        attn_drop (float, optional): Attention dropout rate. Default: 0.0
-        drop_path (float, optional): Stochastic depth rate. Default: 0.0
-        act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        dim (int): 입력 채널 수.
+        input_resolution (tuple[int]): 입력 해상도 (높이, 너비).
+        num_heads (int): 어텐션 헤드 수.
+        window_size (int): 윈도우 크기.
+        shift_size (int): SW-MSA를 위한 윈도우 시프트 크기.
+        mlp_ratio (float): MLP 은닉층 차원의 배수 비율.
+        qkv_bias (bool, optional): True이면 query, key, value에 학습 가능한 bias를 추가합니다. (기본값: True)
+        qk_scale (float | None, optional): head_dim ** -0.5의 기본 qk scale을 대체할 값.
+        drop (float, optional): 드랍아웃 비율 (기본값: 0.0)
+        attn_drop (float, optional): 어텐션 드랍아웃 비율 (기본값: 0.0)
+        drop_path (float, optional): Stochastic depth 비율 (기본값: 0.0)
+        act_layer (nn.Module, optional): 활성화 함수 (기본값: nn.GELU)
+        norm_layer (nn.Module, optional): 정규화 계층 (기본값: nn.LayerNorm)
     """
-
     def __init__(self,
                  dim,
                  input_resolution,
@@ -225,38 +310,51 @@ class SwinTransformerBlock(nn.Module):
                  act_layer=nn.GELU,
                  norm_layer=nn.LayerNorm):
         super().__init__()
+        # 기본 속성 저장: 입력 채널 수, 해상도, 어텐션 헤드 수, 윈도우 크기 및 시프트 크기, MLP 비율
         self.dim = dim
         self.input_resolution = input_resolution
         self.num_heads = num_heads
         self.window_size = window_size
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
+
+        # 입력 해상도가 윈도우 크기보다 작거나 같으면, 윈도우 분할이 불필요하므로 시프트 크기를 0으로 설정하고
+        # 윈도우 크기를 입력 해상도의 최소값으로 맞춥니다.
         if min(self.input_resolution) <= self.window_size:
-            # if window size is larger than input resolution, we don't partition windows
             self.shift_size = 0
             self.window_size = min(self.input_resolution)
+        # shift_size는 0 이상, window_size 미만이어야 합니다.
         assert 0 <= self.shift_size < self.window_size, 'shift_size must in 0-window_size'
 
+        # 첫 번째 정규화 계층 (예: LayerNorm) - 어텐션 전에 피처 정규화
         self.norm1 = norm_layer(dim)
+        # WindowAttention 모듈 초기화: 윈도우 내에서 멀티헤드 셀프 어텐션을 수행합니다.
         self.attn = WindowAttention(
             dim,
-            window_size=to_2tuple(self.window_size),
+            window_size=to_2tuple(self.window_size), # 윈도우 크기를 튜플 형태로 변환
             num_heads=num_heads,
             qkv_bias=qkv_bias,
             qk_scale=qk_scale,
             attn_drop=attn_drop,
             proj_drop=drop)
 
+        # Stochastic Depth (DropPath) 모듈: drop_path 비율이 0보다 크면 적용, 그렇지 않으면 Identity (변경 없음)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        # 두 번째 정규화 계층 - MLP 입력 전 정규화
         self.norm2 = norm_layer(dim)
+        # MLP 은닉층 차원 설정: 입력 차원에 mlp_ratio를 곱한 값
         mlp_hidden_dim = int(dim * mlp_ratio)
+        # MLP 모듈 초기화: 두 개의 선형 계층과 활성화 함수, 드랍아웃을 포함한 다층 퍼셉트론
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
+        # 윈도우 시프트가 적용되는 경우, 어텐션 마스크를 계산하여 설정합니다.
         if self.shift_size > 0:
             attn_mask = self.calculate_mask(self.input_resolution)
         else:
             attn_mask = None
 
+        # 계산된 어텐션 마스크를 버퍼에 등록합니다.
+        # register_buffer를 사용하면 학습 시 업데이트되지 않으며, 모델의 상태에 포함됩니다.
         self.register_buffer('attn_mask', attn_mask)
 
     def calculate_mask(self, x_size):
@@ -842,9 +940,10 @@ class SwinIR(nn.Module):
                                             (patches_resolution[0], patches_resolution[1]))
         elif self.upsampler == 'nearest+conv':
             # for real-world SR (less artifacts)
-            assert self.upscale == 4, 'only support x4 now.'
+            assert self.upscale in [4, 5], '현재 4배와 5배 업스케일링만 지원됩니다.'  # ✅ 5배 업스케일링 지원 추가
             self.conv_before_upsample = nn.Sequential(
                 nn.Conv2d(embed_dim, num_feat, 3, 1, 1), nn.LeakyReLU(inplace=True))
+
             self.conv_up1 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
             self.conv_up2 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
             self.conv_hr = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
@@ -904,20 +1003,25 @@ class SwinIR(nn.Module):
             x = self.conv_after_body(self.forward_features(x)) + x
             x = self.upsample(x)
         elif self.upsampler == 'nearest+conv':
-            # for real-world SR
+            # 4배, 5배 업스케일링 지원 추가
+            assert self.upscale in [4, 5], '현재 4배와 5배 업스케일링만 지원됩니다.'
             x = self.conv_first(x)
             x = self.conv_after_body(self.forward_features(x)) + x
             x = self.conv_before_upsample(x)
-            x = self.lrelu(self.conv_up1(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
-            x = self.lrelu(self.conv_up2(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
-            x = self.conv_last(self.lrelu(self.conv_hr(x)))
-        else:
-            # for image denoising and JPEG compression artifact reduction
-            x_first = self.conv_first(x)
-            res = self.conv_after_body(self.forward_features(x_first)) + x_first
-            x = x + self.conv_last(res)
 
-        x = x / self.img_range + self.mean
+            # 5배 업스케일링을 위한 nearest 보간 후 Conv 적용
+            if self.upscale == 5:
+                x = torch.nn.functional.interpolate(x, scale_factor=5, mode='nearest')  # 🔥 5배 업스케일링
+                x = self.lrelu(self.conv_up1(x))  # Conv 적용
+                x = self.lrelu(self.conv_up2(x))  # Conv 추가 적용
+                x = self.lrelu(self.conv_hr(x))   # Conv 추가 적용
+            else:
+                x = torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')  # 2배 업스케일링
+                x = self.lrelu(self.conv_up1(x))
+                x = torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')  # 4배 업스케일링
+                x = self.lrelu(self.conv_up2(x))
+
+            x = self.conv_last(self.lrelu(self.conv_hr(x)))
 
         return x
 

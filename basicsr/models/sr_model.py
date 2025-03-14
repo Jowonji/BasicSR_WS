@@ -296,10 +296,12 @@ class SRModel(BaseModel):
                     sr_img_colormap = cm.viridis(sr_img_normalized)[:, :, :3]  # Viridis 컬러맵 적용
                     sr_img_colormap = (sr_img_colormap * 255).astype(np.uint8)
 
-                    # 저장 경로 설정
-                    save_img_path = osp.join(self.opt['path']['visualization'], dataset_name, f'{img_name}_{current_iter}.png')
-                    save_dir = osp.dirname(save_img_path)
-                    os.makedirs(save_dir, exist_ok=True)  # 폴더 생성
+                    # 이미지별 폴더 생성
+                    img_folder = osp.join(self.opt['path']['visualization'], dataset_name, img_name)
+                    os.makedirs(img_folder, exist_ok=True)
+
+                    # 🔹 iter별로 저장하도록 경로 설정
+                    save_img_path = osp.join(img_folder, f'{current_iter}.png')
 
                     # 이미지 저장
                     try:

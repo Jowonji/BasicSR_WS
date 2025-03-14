@@ -22,8 +22,8 @@ datasets:
     use_rot: true
 
     # data loader
-    num_worker_per_gpu: 6
-    batch_size_per_gpu: 4
+    num_worker_per_gpu: 12
+    batch_size_per_gpu: 32
     dataset_enlarge_ratio: 1
     prefetch_mode: ~
 
@@ -67,10 +67,10 @@ train:
 
   scheduler:
     type: MultiStepLR
-    milestones: [250000, 400000, 450000, 475000]
+    milestones: [43750, 65625, 78750, 83125] # 50%, 75%, 90%, 95%에서 학습률 감소
     gamma: 0.5
 
-  total_iter: 500000
+  total_iter: 87500
   warmup_iter: -1  # no warm up
 
   # losses
@@ -81,7 +81,7 @@ train:
 
 # validation settings
 val:
-  val_freq: !!float 5e3
+  val_freq: !!float 1.75e4
   save_img: false
 
   metrics:
@@ -93,7 +93,7 @@ val:
 # logging settings
 logger:
   print_freq: 100
-  save_checkpoint_freq: !!float 5e3
+  save_checkpoint_freq: !!float 1.75e4
   use_tb_logger: true
   wandb:
     project: ~

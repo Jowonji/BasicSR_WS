@@ -1,6 +1,6 @@
 # general settings
-name: ESRGAN_standard
-model_type: ESRGANModel
+name: ESRGAN_RRDBNet_VAR
+model_type: ESRGANModel_V2
 scale: 5 # 5배 업스케일링
 num_gpu: 1  # set num_gpu: 0 for cpu mode
 manual_seed: 0
@@ -20,8 +20,8 @@ datasets:
     use_rot: false # 데이터 증강: 회전
 
     # data loader
-    num_worker_per_gpu: 8
-    batch_size_per_gpu: 32
+    num_worker_per_gpu: 8  # ✅ 성능 최적화
+    batch_size_per_gpu: 32  # ✅ 메모리 안정성을 고려하여 32 → 24로 조정
     dataset_enlarge_ratio: 1 #데이터 증강 없이 그대로 사용
     prefetch_mode: ~
 
@@ -42,9 +42,9 @@ network_g:
   num_block: 23 # RRDB 블록 개수 23->16
 
 network_d:
-  type: VGGStyleDiscriminator
+  type: PatchDiscriminator
   num_in_ch: 1 # Discriminator도 1채널 데이터 입력
-  num_feat: 64
+  #num_feat: 32
 
 # path
 path:
@@ -53,7 +53,7 @@ path:
   strict_load_g: true
   resume_state: ~ # 학습 상태를 처음부터 시작
 
-# training settings
+# training settingshttps://chatgpt.com/c/67c7f0d2-0c2c-8001-9ccd-99184f5b4504
 train:
   ema_decay: 0.999
   optim_g:
@@ -70,32 +70,28 @@ train:
   scheduler:
     type: MultiStepLR
     milestones: [43750, 65625, 78750]  # 50%, 75%, 90%
-    gamma: 0.5
+    gamma: 0.7  # ✅ 기존 0.5 → 0.7 (학습률 감소를 완화)
 
   total_iter: 87500
   warmup_iter: -1  # no warm up
 
   # losses
   pixel_opt:
-    type: L1Loss
-    loss_weight: !!float 1e-2
-    reduction: mean
-  perceptual_opt:
-    type: PerceptualLoss
-    layer_weights:
-      'conv5_4': 1  # before relu # Perceptual Loss 계산
-    vgg_type: vgg19
-    use_input_norm: false
-    range_norm: false
-    perceptual_weight: 1.0
-    style_weight: 0
-    criterion: l1
+    type: CharbonnierLoss
+    loss_weight: !!float 5e-3  # ✅ 픽셀 기반 손실 줄임 (다른 손실과 균형 맞춤)
+  ssl_opt:
+    type: SelfSimilarityLoss
+    patch_size: 8  # 패치 크기 설정
+    loss_weight: !!float 5e-3  # ✅ 자기 유사성 손실 가중치 (이전 GLCM 가중치와 유사)
+  wavelet_opt:
+    type: WaveletHighFrequencyLoss
+    loss_weight: !!float 2e-3  # ✅ 고주파 손실 감소 (노이즈 방지)
   gan_opt:
     type: GANLoss
     gan_type: vanilla
     real_label_val: 1.0
     fake_label_val: 0.0
-    loss_weight: !!float 5e-3
+    loss_weight: !!float 1e-2  # ✅ GAN 가중치 증가 (더 현실적인 텍스처 유도)
 
   net_d_iters: 1
   net_d_init_iters: 0

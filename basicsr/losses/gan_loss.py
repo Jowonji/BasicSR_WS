@@ -6,6 +6,39 @@ from torch.nn import functional as F
 
 from basicsr.utils.registry import LOSS_REGISTRY
 
+@LOSS_REGISTRY.register()
+class GANLoss_V2(nn.Module):
+    """GAN Loss (Vanilla, LSGAN, Hinge 등 지원)"""
+    def __init__(self, gan_type, real_label_val=1.0, fake_label_val=0.0, loss_weight=1.0, use_frequency_domain=False):
+        super(GANLoss_V2, self).__init__()
+        self.gan_type = gan_type
+        self.real_label_val = real_label_val
+        self.fake_label_val = fake_label_val
+        self.loss_weight = loss_weight
+        self.use_frequency_domain = use_frequency_domain  # ✅ 주파수 도메인에서만 사용할지 여부
+
+        if gan_type == 'vanilla':
+            self.loss = nn.BCEWithLogitsLoss()
+        elif gan_type == 'lsgan':
+            self.loss = nn.MSELoss()
+        elif gan_type == 'hinge':
+            self.loss = None  # Hinge Loss는 별도로 정의
+        else:
+            raise NotImplementedError(f'GAN type [{gan_type}] is not implemented.')
+
+    def forward(self, pred, target_is_real, is_disc):
+        """GAN Loss 계산"""
+        if self.gan_type == 'hinge':
+            if is_disc:
+                return torch.mean(F.relu(1.0 - pred)) if target_is_real else torch.mean(F.relu(1.0 + pred))
+            else:
+                return -torch.mean(pred)
+
+        target_val = self.real_label_val if target_is_real else self.fake_label_val
+        target_tensor = torch.full_like(pred, target_val)
+
+        return self.loss(pred, target_tensor) * self.loss_weight
+
 
 @LOSS_REGISTRY.register()
 class GANLoss(nn.Module):
@@ -110,6 +143,8 @@ class GANLoss(nn.Module):
 
         # loss_weight is always 1.0 for discriminators
         return loss if is_disc else loss * self.loss_weight
+
+
 
 
 @LOSS_REGISTRY.register()
